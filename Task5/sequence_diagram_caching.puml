@@ -1,0 +1,65 @@
+@startuml
+
+actor "Оператор" as Operator
+participant "MES Frontend" as Frontend
+participant "MES API" as API
+participant "Redis" as Cache
+database "MES DB" as DB
+
+
+Operator -> Frontend: Открыть дашборд, статус APPROVED
+Frontend -> API: GET /orders?status=APPROVED&page=1
+API -> Cache: GET orders:list:APPROVED:1
+Cache --> API: null (промах)
+
+note right of API
+  **Cache-Aside:**
+  1. Проверка кеша
+  2. При промахе — чтение из БД
+  3. Сохранение в кеш
+end note
+
+API -> DB: SELECT * FROM orders WHERE status='APPROVED' LIMIT 20
+DB --> API: список заказов
+API -> Cache: SET orders:list:APPROVED:1 (TTL 60 сек)
+Cache --> API: OK
+API --> Frontend: список заказов
+Frontend --> Operator: отображение списка
+
+Operator -> Frontend: Взять заказ #123 в работу
+Frontend -> API: POST /orders/123/start
+API -> DB: UPDATE orders SET status='STARTED' WHERE id=123
+DB --> API: OK
+
+note right of API
+  **Инвалидация кеша:**
+  При изменении данных удаляем:
+  - Ключ конкретного заказа
+  - Списки, где мог быть этот заказ
+end note
+
+API -> Cache: DEL order:123
+Cache --> API: OK
+API -> Cache: DEL orders:list:APPROVED:*
+Cache --> API: OK
+API -> Cache: DEL orders:list:STARTED:*
+Cache --> API: OK
+
+API --> Frontend: статус обновлён
+Frontend --> Operator: заказ взят в работу
+
+Operator -> Frontend: Обновить дашборд
+Frontend -> API: GET /orders?status=APPROVED&page=1
+API -> Cache: GET orders:list:APPROVED:1
+Cache --> API: актуальный список
+
+note right of API
+  **Cache Hit:**
+  Данные возвращаются из кеша,
+  запрос к БД не выполняется
+end note
+
+API --> Frontend: список заказов
+Frontend --> Operator: мгновенное отображение
+
+@enduml
