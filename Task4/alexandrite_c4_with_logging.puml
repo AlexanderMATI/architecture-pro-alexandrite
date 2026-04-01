@@ -1,0 +1,69 @@
+@startuml
+!include <C4/C4_Container>
+
+skinparam {
+    backgroundColor #FAFAFA
+    roundCorner 20
+    shadowing true
+}
+
+AddElementTag("logging", $bgColor="#FF0000", $fontColor="#FFFFFF", $borderColor="#CC0000")
+AddRelTag("logging", $lineColor="#FF0000", $lineThickness="2")
+
+Person(customer, "Customer", "Orders jewelry through the web shop")
+Person(seller, "Seller", "Manages orders, confirms manufacturing")
+Person(operator, "Operator", "Takes orders, manufactures jewelry")
+Person(api_user, "API User", "External B2B partner")
+Person(devops, "DevOps/Support", "Analyzes logs, sets up alerts", $tags="logging")
+
+System_Ext(smart_device, "Transport Company", "Delivers finished orders")
+
+System_Boundary(alexandrite, "Alexandrite System") {
+    Container(shop_frontend, "Internet Shop", "Vue", "User can make an order, upload 3D model")
+    Container(crm_frontend, "CRM", "Vue", "Sales management interface")
+    Container(mes_frontend, "MES", "React", "Production interface")
+    Container(shop_api, "Shop API", "Spring Boot", "Receives orders, saves order information")
+    Container(crm_api, "CRM API", "Spring Boot", "Manages orders, confirmations")
+    Container(mes_api, "MES API", "C#", "Calculates price, assigns orders to operators")
+    ContainerDb(shop_db, "Shop DB", "PostgreSQL", "Order information from customer perspective")
+    ContainerDb(crm_db, "CRM DB", "PostgreSQL", "Customer and order data")
+    ContainerDb(mes_db, "MES DB", "PostgreSQL", "Production orders and statuses")
+    ContainerQueue(rabbitmq, "Message Queue", "RabbitMQ", "Sends messages about new orders, status changes")
+    ContainerDb(file_storage, "3D File Storage", "S3", "Stores 3D model files")
+    Container(fluent_collector, "Fluentd Agent", "Fluentd", "Collects and forwards logs from all services", $tags="logging")
+    Container(opensearch, "OpenSearch Cluster", "OpenSearch", "Stores and indexes logs, executes search queries", $tags="logging")
+    Container(opensearch_dashboards, "OpenSearch Dashboards", "Dashboards", "Visualization, search, alerting, anomaly detection", $tags="logging")
+}
+
+Rel(customer, shop_frontend, "Orders jewelry, uploads 3D models", "HTTPS")
+Rel(seller, crm_frontend, "Manages orders", "HTTPS")
+Rel(operator, mes_frontend, "Takes orders", "HTTPS")
+Rel(api_user, mes_api, "Creates orders via API", "HTTPS/JSON")
+Rel(devops, opensearch_dashboards, "Analyzes logs, creates dashboards, sets up alerts", "HTTPS", $tags="logging")
+
+Rel(shop_frontend, shop_api, "Sends API requests", "HTTPS/JSON")
+Rel(crm_frontend, crm_api, "Sends API requests", "HTTPS/JSON")
+Rel(mes_frontend, mes_api, "Sends API requests", "HTTPS/JSON")
+
+Rel(shop_api, shop_db, "Reads/writes order data", "TCP/IP")
+Rel(crm_api, crm_db, "Reads/writes customer data", "TCP/IP")
+Rel(mes_api, mes_db, "Reads/writes production data", "TCP/IP")
+
+Rel(shop_api, file_storage, "Uploads 3D models", "HTTPS/S3")
+Rel(mes_api, file_storage, "Reads 3D models for price calculation", "HTTPS/S3")
+
+Rel(shop_api, rabbitmq, "Sends order for price calculation", "AMQP")
+Rel(crm_api, rabbitmq, "Sends/receives order status updates", "AMQP")
+Rel(mes_api, rabbitmq, "Receives orders, sends status updates", "AMQP")
+
+Rel(mes_api, smart_device, "Sends shipping notifications", "HTTPS")
+
+Rel(shop_api, fluent_collector, "Sends logs (JSON)", "stdout/file", $tags="logging")
+Rel(crm_api, fluent_collector, "Sends logs (JSON)", "stdout/file", $tags="logging")
+Rel(mes_api, fluent_collector, "Sends logs (JSON)", "stdout/file", $tags="logging")
+Rel(rabbitmq, fluent_collector, "Sends logs", "stdout/file", $tags="logging")
+
+Rel(fluent_collector, opensearch, "Forwards logs", "HTTPS/JSON", $tags="logging")
+Rel(opensearch, opensearch_dashboards, "Query and visualize logs", "HTTPS", $tags="logging")
+
+@enduml
