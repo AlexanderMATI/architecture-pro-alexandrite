@@ -1,0 +1,163 @@
+1. Системы для покрытия трейсингом
+
+Критические точки отказа в системе:
+
+- Онлайн-магазин -> Shop API -> RabbitMQ: потеря заказа при создании, ошибки загрузки 3D-файлов, сбои при отправке сообщений
+- RabbitMQ -> MES API: потеря сообщений в очереди, долгий расчёт стоимости (2-30 мин), таймауты при загрузке из S3
+- MES API -> RabbitMQ -> CRM API: потеря результатов расчёта, расссинхронизация статусов, дублирование сообщений
+- CRM API -> RabbitMQ -> MES API: потеря подтверждений заказа, несвоевременное получение заказа операторами
+- Обновления статусов внутри MES: потеря информации о смене статусов, зависание в промежуточных статусах
+
+Данные для трейсинга:
+
+- trace_id — сквозной идентификатор заказа
+- span_id — идентификатор операции
+- order_id — номер заказа
+- timestamp — время начала
+- duration — длительность
+- service_name — название сервиса
+- operation_name — название операции
+- status — success/error
+
+2. Мотивация
+
+Компания теряет заказы, контракты и клиентов, но не видит, где именно ломается процесс. Трейсинг даст:
+
+- Визуализацию пути заказа через все системы
+- Быстрое нахождение узких мест (с дней до минут)
+- Проактивное обнаружение проблем до жалоб
+
+Технические метрики:
+- MTTR: с 3 дней до 3 часов
+- Потеря заказов: с 5% до <1%
+- Время обнаружения инцидентов: с часов до 5 минут
+- Успешная доставка сообщений: до 99.5%
+
+3. Предлагаемое решение
+
+Стек технологий:
+- OpenTelemetry SDK — инструментирование сервисов
+- OpenTelemetry Collector — агрегация телеметрии
+- Jaeger — хранение и визуализация трейсов
+- Elasticsearch — долговременное хранение
+
+Инструментирование сервисов:
+
+Shop API и CRM API (Spring Boot):
+- opentelemetry-spring-boot-starter
+- Автоматическое: HTTP endpoints, JDBC
+- Ручное: публикация в RabbitMQ, загрузка в S3
+
+MES API (C#):
+- OpenTelemetry.Instrumentation.AspNetCore
+- OpenTelemetry.Instrumentation.EntityFrameworkCore
+- Длительные операции расчета требуют heartbeat-спанов
+
+RabbitMQ:
+- Передача trace context через W3C Trace Context format в message headers
+- Связывание продюсера и консюмера через parent_span_id
+
+Новые компоненты (красным на схеме):
+- OpenTelemetry Collector — приём данных от всех сервисов
+- Jaeger All-in-One — хранение и UI
+- Elasticsearch — долговременное хранение
+
+Схема - 
+
+Дополнительное задание (в рамках п.3)
+
+Alert Manager:
+- Получает алерты от Jaeger через webhooks
+- Группировка и роутинг
+- Отправка в Telegram/Slack/PagerDuty
+
+Order State Monitor:
+- Читает трейсы из Jaeger API
+- Отслеживает прогресс заказа
+- Автоматически создаёт тикеты для зависших заказов
+
+Правила алертинга:
+
+Order stuck:
+- Заказ не меняет статус >30 минут
+- HIGH: уведомление в Telegram поддержки
+
+Message loss:
+- Нет child span для published message за 5 минут
+- CRITICAL: PagerDuty дежурному инженеру
+
+High error rate:
+- >5% трейсов с ошибками за 10 минут
+- HIGH: уведомление команды разработки
+
+SLA breach:
+- Операция превышает p99 latency
+- MEDIUM: уведомление в Slack
+
+B2B API degradation:
+- >1% ошибок от B2B клиентов
+- CRITICAL: немедленное эскалирование
+
+Новые связи:
+- Jaeger -> Alert Manager
+- Alert Manager -> Slack / Telegram / PagerDuty
+- Alert Manager -> Order State Monitor
+- Order State Monitor -> Ticketing System
+
+Новый вариант диаграммы - 
+
+4. Компромиссы
+
+Legacy MES с закрытым кодом:
+- Инструментируем только точки входа/выхода
+- Обертываем вызовы в instrumented код
+
+RabbitMQ как "черный ящик":
+- Трейсим только publish и consume
+- Используем correlation ID для связи
+
+S3 Storage:
+- Создаём искусственный спан на клиенте
+- Не видим internal processing в S3
+
+Высокая нагрузка:
+- Aggressive sampling (10% успешных)
+- Tail-based sampling для долгих операций
+- Риск: пропуск редких проблем
+
+Чувствительные данные:
+- Фильтруем PII из спанов
+- Хешируем sensitive fields
+- Усложнение дебаггинга
+
+Синхронизация времени:
+- NTP на всех серверах
+- Logical clocks для ordering
+
+
+5. Безопасность
+
+Аутентификация и авторизация:
+- Jaeger UI через OAuth2/OIDC (Keycloak)
+- Роли: trace.viewer (поддержка), trace.admin (DevOps), trace.developer (разработчики)
+- SSO с Active Directory
+
+Сетевые политики:
+- Jaeger UI только из внутренней сети
+- VPN для удалённого доступа
+- mTLS для service-to-collector
+
+Защита данных:
+- Автоматическое удаление PII: email, телефон, адреса
+- Хеширование sensitive полей
+
+Аудит:
+- Логирование кто и какие трейсы смотрел
+- Retention 1 год
+
+Rate Limiting:
+- 100 запросов/мин на пользователя к Jaeger API
+
+Secrets:
+- HashiCorp Vault для credentials
+- Ротация каждые 90 дней
